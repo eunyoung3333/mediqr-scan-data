@@ -13,6 +13,7 @@ st.set_page_config(
     page_title="메디QR 주간 인사이트",
     page_icon="💊",
     layout="wide",
+    color= "#FFFFFF"
     initial_sidebar_state="expanded"
 )
 
