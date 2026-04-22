@@ -147,19 +147,23 @@ def parse_excel(file) -> dict:
     # 1) RAW_GA 변환: 약국별 일별 유입/스캔 데이터
     if 'RAW_GA 변환' in xl:
         df = xl['RAW_GA 변환'].copy()
-        # 첫 행이 실제 컬럼
-        df.columns = df.iloc[0]
+        # 첫 행을 컬럼명으로 — 중복/NaN 방지
+        new_cols = [str(v).strip() if pd.notna(v) else f'_col_{i}' for i, v in enumerate(df.iloc[0])]
+        df.columns = new_cols
         df = df.iloc[1:].reset_index(drop=True)
+        # 중복 컬럼 제거 (첫 번째만 유지)
+        df = df.loc[:, ~df.columns.duplicated()]
         # 필요한 컬럼만 추출
         cols = ['약국', '유입 일자', '방문 페이지', '총 사용자 수', '바코드 사용 유저', '바코드 이벤트 횟수', '유입 매체']
         available = [c for c in cols if c in df.columns]
         df = df[available].copy()
+        df.columns = list(df.columns)  # MultiIndex 방지
         df['유입 일자'] = pd.to_datetime(df['유입 일자'], errors='coerce')
         for c in ['총 사용자 수', '바코드 사용 유저', '바코드 이벤트 횟수']:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         df = df.dropna(subset=['유입 일자'])
-        df = df[df['약국'] != '약국 정보 없음']
+        df = df[df['약국'].astype(str).str.strip() != '약국 정보 없음']
         result['ga'] = df
 
     # 2) 제작물 리스트: QR 종류 매핑
@@ -655,4 +659,3 @@ if show_raw and 'ga' in main_data:
     st.divider()
     st.markdown("**📋 원시 데이터 (GA 변환)**")
     st.dataframe(main_data['ga'].head(100), use_container_width=True)
-
