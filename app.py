@@ -81,7 +81,7 @@ st.markdown("""
     .section-header {
         font-size: 1.3rem;
         font-weight: 700;
-        color: #1E293B;
+        color: #FFFFFF;
         margin: 24px 0 16px 0;
         padding-bottom: 8px;
         border-bottom: 2px solid #E2E8F0;
@@ -178,9 +178,47 @@ def parse_excel(file) -> dict:
         df = df.iloc[1:].reset_index(drop=True)
         result['scan_trend'] = df
 
-    # 4) 환급 요약
+    # 4) ★약국 요약 시트 — 누적 주차별 집계 파싱
     if '★약국 - 환급자 수, 메디QR 진입, 바코드 수' in xl:
-        result['summary_raw'] = xl['★약국 - 환급자 수, 메디QR 진입, 바코드 수']
+        s = xl['★약국 - 환급자 수, 메디QR 진입, 바코드 수'].copy()
+        # row 5=헤더, row 6~=주차별 누적 합계 (기준/환급/진입/바코드실행유저/바코드스캔)
+        rows = []
+        for i in range(6, min(6+10, len(s))):
+            label = str(s.iloc[i, 1]).strip()
+            if label in ('nan', '', '변동률'):
+                continue
+            # 주차 합계 행만 포함 (~ 로 시작하는 행)
+            if not label.startswith('~'):
+                continue
+            try:
+                rows.append({
+                    '기준': label,
+                    '환급이용자수': float(s.iloc[i, 2]) if str(s.iloc[i, 2]) != 'nan' else None,
+                    '메디QR진입유저수': float(s.iloc[i, 3]) if str(s.iloc[i, 3]) != 'nan' else None,
+                    '바코드실행유저수': float(s.iloc[i, 4]) if str(s.iloc[i, 4]) != 'nan' else None,
+                    '바코드스캔횟수': float(s.iloc[i, 5]) if str(s.iloc[i, 5]) != 'nan' else None,
+                })
+            except Exception:
+                pass
+        result['weekly_summary'] = rows
+
+        # 약국별 상세 (row 11=헤더, row 12~=약국 데이터)
+        pharm_rows = []
+        for i in range(12, len(s)):
+            name = str(s.iloc[i, 1]).strip()
+            if name in ('nan', ''):
+                continue
+            try:
+                pharm_rows.append({
+                    '약국': name,
+                    '환급이용자수': float(s.iloc[i, 2]) if str(s.iloc[i, 2]) != 'nan' else 0,
+                    '메디QR진입유저수': float(s.iloc[i, 3]) if str(s.iloc[i, 3]) != 'nan' else 0,
+                    '바코드실행유저수': float(s.iloc[i, 4]) if str(s.iloc[i, 4]) != 'nan' else 0,
+                    '바코드스캔횟수': float(s.iloc[i, 5]) if str(s.iloc[i, 5]) != 'nan' else 0,
+                })
+            except Exception:
+                pass
+        result['pharm_summary'] = pd.DataFrame(pharm_rows)
 
     return result
 
@@ -352,8 +390,8 @@ st.markdown("""
 <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
     <span style="font-size:2rem">💊</span>
     <div>
-        <div style="font-size:1.6rem; font-weight:800; color:#1E293B; line-height:1.2">메디QR 주간 인사이트</div>
-        <div style="font-size:0.9rem; color:#64748B; margin-top:2px">엑셀 파일을 업로드하면 AI가 주간 변화를 분석해드립니다</div>
+        <div style="font-size:1.6rem; font-weight:800; color:#FFFFFF; line-height:1.2">메디QR 주간 인사이트</div>
+        <div style="font-size:0.9rem; color:#CBD5E1; margin-top:2px">엑셀 파일을 업로드하면 AI가 주간 변화를 분석해드립니다</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -432,64 +470,99 @@ with tabs[0]:
     if 'ga' in main_data:
         df = main_data['ga']
 
-        # 최근 2주 분리
-        df['주차'] = df['유입 일자'].dt.to_period('W').astype(str)
-        weeks = sorted(df['주차'].unique())
+        # ── ★약국 시트에서 누적 합계 추출 ──────────────────────────────────────
+        # A파일(이전): weekly_summary의 마지막 행 = N주 누적
+        # B파일(현재): weekly_summary의 마지막 행 = N+1주 누적
+        # 두 파일의 차이 = 이번 1주간 신규 수치
 
-        curr_w = weeks[-1]
-        curr_df = df[df['주차'] == curr_w]
-        prev_df = df[df['주차'] == weeks[-2]] if len(weeks) >= 2 else pd.DataFrame()
+        def get_latest_summary(data):
+            rows = data.get('weekly_summary', [])
+            if rows:
+                return rows[-1]  # 가장 최근 누적 행
+            return None
 
-        curr_users = int(curr_df['총 사용자 수'].sum())
-        curr_barcode_users = int(curr_df['바코드 사용 유저'].sum())
-        curr_scans = int(curr_df['바코드 이벤트 횟수'].sum())
-        curr_pharmacies = curr_df['약국'].nunique()
+        curr_sum = get_latest_summary(main_data)
+        prev_sum = get_latest_summary(compare_data) if compare_data else None
 
-        prev_users = int(prev_df['총 사용자 수'].sum()) if not prev_df.empty else 0
-        prev_scans = int(prev_df['바코드 이벤트 횟수'].sum()) if not prev_df.empty else 0
+        # 메디QR 진입 유저 수 증감 (B누적 - A누적)
+        if curr_sum and prev_sum:
+            new_visitors = int((curr_sum.get('메디QR진입유저수') or 0) - (prev_sum.get('메디QR진입유저수') or 0))
+            new_barcode_users = int((curr_sum.get('바코드실행유저수') or 0) - (prev_sum.get('바코드실행유저수') or 0))
+            prev_visitors = int(prev_sum.get('메디QR진입유저수') or 0)
+            prev_barcode = int(prev_sum.get('바코드실행유저수') or 0)
+            has_compare = True
+        elif curr_sum:
+            new_visitors = int(curr_sum.get('메디QR진입유저수') or 0)
+            new_barcode_users = int(curr_sum.get('바코드실행유저수') or 0)
+            prev_visitors = 0
+            prev_barcode = 0
+            has_compare = False
+        else:
+            # fallback: GA 시트에서 계산
+            new_visitors = int(df['총 사용자 수'].sum())
+            new_barcode_users = int(df['바코드 사용 유저'].sum())
+            prev_visitors = 0
+            prev_barcode = 0
+            has_compare = False
 
-        def delta_str(curr, prev):
-            if prev == 0:
-                return ""
-            pct = (curr - prev) / prev * 100
-            arrow = "▲" if pct > 0 else "▼"
-            cls = "delta-up" if pct > 0 else "delta-down"
-            return f'<span class="{cls}">{arrow} {abs(pct):.1f}%</span>'
+        # 활성 약국 수: B파일의 +1주 기간 동안 바코드 스캔이 일어난 약국
+        # GA 시트에서 이전 파일 기간 이후 날짜의 데이터만 필터
+        if compare_data and 'ga' in compare_data:
+            prev_max_date = compare_data['ga']['유입 일자'].max()
+            new_week_df = df[df['유입 일자'] > prev_max_date]
+        else:
+            new_week_df = df
+
+        active_pharmacies = new_week_df[new_week_df['바코드 이벤트 횟수'] > 0]['약국'].nunique()
+
+        # 전환율 (이번 주 신규 기간 기준)
+        new_week_visitors = int(new_week_df['총 사용자 수'].sum())
+        new_week_barcode = int(new_week_df['바코드 사용 유저'].sum())
+        conv_rate = new_week_barcode / new_week_visitors * 100 if new_week_visitors > 0 else 0
+
+        def delta_tag(val, prev_val):
+            if prev_val == 0 or not has_compare:
+                return '<span style="color:#94A3B8; font-size:0.8rem">누적 대비 이번 주</span>'
+            pct = val / prev_val * 100 if prev_val > 0 else 0
+            arrow = "▲" if val >= 0 else "▼"
+            cls = "delta-up" if val >= 0 else "delta-down"
+            return f'<span class="{cls}">{arrow} {abs(pct):.1f}% (전주 누적 대비)</span>'
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-value">{curr_users:,}</div>
-                <div class="metric-label">총 방문자 수</div>
-                <div class="metric-delta">{delta_str(curr_users, prev_users)} 전주 대비</div>
+                <div class="metric-value">{new_visitors:+,}</div>
+                <div class="metric-label">이번 주 메디QR 신규 진입</div>
+                <div class="metric-delta">{delta_tag(new_visitors, prev_visitors)}</div>
             </div>""", unsafe_allow_html=True)
         with c2:
             st.markdown(f"""
             <div class="metric-card green">
-                <div class="metric-value">{curr_scans:,}</div>
-                <div class="metric-label">바코드 스캔 횟수</div>
-                <div class="metric-delta">{delta_str(curr_scans, prev_scans)} 전주 대비</div>
+                <div class="metric-value">{new_barcode_users:+,}</div>
+                <div class="metric-label">이번 주 바코드 실행 유저 증감</div>
+                <div class="metric-delta">{delta_tag(new_barcode_users, prev_barcode)}</div>
             </div>""", unsafe_allow_html=True)
         with c3:
-            conv_rate = curr_barcode_users / curr_users * 100 if curr_users > 0 else 0
             st.markdown(f"""
             <div class="metric-card orange">
                 <div class="metric-value">{conv_rate:.1f}%</div>
                 <div class="metric-label">바코드 전환율</div>
-                <div class="metric-delta" style="color:#64748B">방문 → 스캔</div>
+                <div class="metric-delta" style="color:#94A3B8; font-size:0.8rem">이번 주 방문 → 스캔</div>
             </div>""", unsafe_allow_html=True)
         with c4:
             st.markdown(f"""
             <div class="metric-card purple">
-                <div class="metric-value">{curr_pharmacies}</div>
-                <div class="metric-label">활성 약국 수</div>
-                <div class="metric-delta" style="color:#64748B">이번 주 기준</div>
+                <div class="metric-value">{active_pharmacies}</div>
+                <div class="metric-label">바코드 스캔 활성 약국</div>
+                <div class="metric-delta" style="color:#94A3B8; font-size:0.8rem">이번 주 스캔 발생 약국</div>
             </div>""", unsafe_allow_html=True)
 
         st.markdown('<div class="section-header">일별 방문 트렌드</div>', unsafe_allow_html=True)
 
-        daily = df.groupby('유입 일자').agg(
+        # 이번 주(+1주) 기간만 트렌드 표시
+        trend_df = new_week_df if (compare_data and 'ga' in compare_data) else df
+        daily = trend_df.groupby('유입 일자').agg(
             총사용자=('총 사용자 수', 'sum'),
             바코드스캔=('바코드 이벤트 횟수', 'sum')
         ).reset_index()
