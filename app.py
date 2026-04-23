@@ -134,44 +134,37 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* ── 로딩 오버레이 (TT 스타일) ── */
-    #tt-loader {
-        position: fixed;
-        inset: 0;
-        background: #000;
-        z-index: 99999;
+    /* ── 스피너 로딩 ── */
+    .mq-spinner-wrap {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        padding: 60px 0;
+        gap: 20px;
     }
-    #tt-loader .tt-pct {
-        font-family: 'Pretendard', monospace;
-        font-size: clamp(5rem, 20vw, 15rem);
-        font-weight: 800;
-        color: #fff;
-        letter-spacing: -0.04em;
-        line-height: 1;
+    .mq-spinner {
+        position: relative;
+        width: 72px;
+        height: 72px;
     }
-    #tt-loader .tt-label {
-        font-size: 0.95rem;
-        color: #555;
-        letter-spacing: 0.35em;
-        text-transform: uppercase;
-        margin-top: 1.2rem;
+    .mq-spinner-pct {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4F6EF7;
+        letter-spacing: 0.05em;
     }
-    #tt-loader .tt-bar-wrap {
-        width: min(360px, 60vw);
-        height: 2px;
-        background: #1a1a1a;
-        margin-top: 2rem;
-        border-radius: 2px;
-        overflow: hidden;
+    .mq-spinner canvas {
+        position: absolute;
+        inset: 0;
     }
-    #tt-loader .tt-bar-fill {
-        height: 100%;
-        background: #fff;
-        width: 0%;
+    /* 분석 완료 후 버튼 비활성 스타일 */
+    .btn-done button {
+        background: #94A3B8 !important;
+        cursor: not-allowed !important;
+        pointer-events: none !important;
+        box-shadow: none !important;
+        transform: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -414,31 +407,49 @@ st.markdown("""
 
 st.divider()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 수정 1·2: 사이드바 — 파일 2개 시 + 버튼 숨김 & 분석 시작하기 버튼 노출
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── session_state 초기화 ──
+if 'run_analysis' not in st.session_state:
+    st.session_state['run_analysis'] = False
+if 'prev_file_count' not in st.session_state:
+    st.session_state['prev_file_count'] = 0
+
 with st.sidebar:
     st.markdown("### 📂 파일 업로드")
-    st.markdown("매주 새로운 엑셀 파일을 업로드하세요")
+    st.markdown("이전 주차(A) + 현재 주차(B) 파일을 업로드하세요")
 
+    # 4. 파일 업로드 (드롭존 + 파일 리스트 표시)
     uploaded_files = st.file_uploader(
-        "엑셀 파일 (최대 2개)",
+        "엑셀 파일 2개 업로드",
         type=['xlsx'],
         accept_multiple_files=True,
-        help="이전 주 + 현재 주 파일을 함께 올리거나, 1개만 올려도 됩니다"
+        help="A파일(지난 주 누적) + B파일(이번 주 누적)"
     )
 
-    # ── 수정 2: 파일 2개 업로드 시 + 드롭존 숨김 ──
+    # 파일 수가 줄어들면 분석 상태 초기화 (2. 파일 삭제 시 버튼 재활성화)
+    curr_count = len(uploaded_files) if uploaded_files else 0
+    if curr_count < st.session_state['prev_file_count']:
+        st.session_state['run_analysis'] = False
+    st.session_state['prev_file_count'] = curr_count
+
+    # 2. 파일 2개 시 + 드롭존 숨김
     if uploaded_files and len(uploaded_files) >= 2:
         st.markdown(
             "<style>[data-testid='stFileUploaderDropzone']{display:none!important}</style>",
             unsafe_allow_html=True
         )
 
-    # ── 수정 1: 파일 2개 업로드 시 분석 시작하기 버튼 노출 ──
+    # 1. 파일 2개 업로드 시 분석 시작하기 버튼 노출 (파일 리스트 바로 아래)
     if uploaded_files and len(uploaded_files) >= 2:
-        if st.button("🔍 분석 시작하기", type="primary", use_container_width=True):
-            st.session_state['run_analysis'] = True
+        # 2. 분석 완료 후 비활성 처리
+        already_done = st.session_state.get('run_analysis', False)
+        if already_done:
+            st.markdown('<div class="btn-done">', unsafe_allow_html=True)
+            st.button("✅ 분석 완료", type="primary", use_container_width=True, disabled=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            if st.button("🔍 분석 시작하기", type="primary", use_container_width=True):
+                st.session_state['run_analysis'] = True
+                st.rerun()
 
     st.divider()
     st.markdown("### ⚙️ 설정")
@@ -460,13 +471,13 @@ if not uploaded_files:
     st.markdown("""
     <div class="upload-hint">
         <div style="font-size:2rem; margin-bottom:8px">📊</div>
-        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일을 업로드하세요</div>
-        <div>1개 파일: 최신 주차 분석 | 2개 파일: 주차 간 비교 분석</div>
+        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div>
+        <div>A파일(지난 주 누적) + B파일(이번 주 누적)</div>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
 
-# ── 수정 3: 분석 시작 전 대기 ──
+# 분석 시작 전 대기
 if not st.session_state.get('run_analysis'):
     if len(uploaded_files) < 2:
         st.info("📂 파일을 2개 모두 업로드하면 사이드바에 '분석 시작하기' 버튼이 나타납니다.")
@@ -474,49 +485,64 @@ if not st.session_state.get('run_analysis'):
         st.info("👈 사이드바의 '분석 시작하기' 버튼을 눌러주세요.")
     st.stop()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 수정 3: TT 스타일 로딩 오버레이 — 분석 시작 직후 표시, 완료 시 페이드아웃
-# ═══════════════════════════════════════════════════════════════════════════════
+# 3. 스피너 로딩 — 메인 영역(upload-hint 자리)에 표시, 파싱 완료 후 제거
 loader_placeholder = st.empty()
 loader_placeholder.markdown("""
-<div id="tt-loader">
-  <div class="tt-pct" id="tt-pct">0%</div>
-  <div class="tt-label">데이터 분석 중</div>
-  <div class="tt-bar-wrap">
-    <div class="tt-bar-fill" id="tt-bar"></div>
+<div class="mq-spinner-wrap">
+  <div class="mq-spinner">
+    <canvas id="mq-canvas" width="72" height="72"></canvas>
   </div>
+  <div class="mq-spinner-pct" id="mq-pct">0%</div>
 </div>
 <script>
 (function () {
-  var el     = document.getElementById('tt-pct');
-  var bar    = document.getElementById('tt-bar');
-  var loader = document.getElementById('tt-loader');
-  if (!el || !loader) return;
+  var canvas = document.getElementById('mq-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var pctEl = document.getElementById('mq-pct');
+  var total = 12, size = 36, barW = 4.5, barH = 12, r = 20;
+  var pct = 0, frame = 0;
 
-  var n = 0, idx = 0;
-  /* 가속 커브: 느리게 → 빠르게 → 살짝 브레이크 → 점프 */
+  function draw(angle) {
+    ctx.clearRect(0, 0, 72, 72);
+    for (var i = 0; i < total; i++) {
+      var a = (i / total) * Math.PI * 2 - Math.PI / 2;
+      var x = size + Math.cos(a) * r - barW / 2;
+      var y = size + Math.sin(a) * r - barH / 2;
+      var diff = ((angle - i) % total + total) % total;
+      var alpha = 0.15 + (diff / total) * 0.85;
+      ctx.save();
+      ctx.translate(x + barW / 2, y + barH / 2);
+      ctx.rotate(a + Math.PI / 2);
+      ctx.beginPath();
+      ctx.roundRect(-barW / 2, -barH / 2, barW, barH, 2);
+      ctx.fillStyle = 'rgba(79,110,247,' + alpha + ')';
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* 스피너 회전 */
+  var spinIv = setInterval(function () {
+    draw(frame % total);
+    frame++;
+  }, 80);
+
+  /* % 카운트업 */
   var steps = [];
   for (var i = 0; i < 50; i++) steps.push(1);
   for (var i = 0; i < 35; i++) steps.push(2);
   for (var i = 0; i < 8;  i++) steps.push(1);
   steps.push(5);
-
-  var iv = setInterval(function () {
-    if (idx >= steps.length || n >= 100) {
-      n = 100;
-      el.textContent  = '100%';
-      bar.style.width = '100%';
-      clearInterval(iv);
-      setTimeout(function () {
-        loader.style.transition = 'opacity 0.7s ease';
-        loader.style.opacity    = '0';
-        setTimeout(function () { loader.style.display = 'none'; }, 750);
-      }, 350);
+  var idx = 0;
+  var pctIv = setInterval(function () {
+    if (idx >= steps.length || pct >= 100) {
+      pct = 100; pctEl.textContent = '100%';
+      clearInterval(pctIv);
       return;
     }
-    n = Math.min(100, n + steps[idx++]);
-    el.textContent  = n + '%';
-    bar.style.width = n + '%';
+    pct = Math.min(100, pct + steps[idx++]);
+    pctEl.textContent = pct + '%';
   }, 28);
 })();
 </script>
@@ -528,7 +554,7 @@ for f in uploaded_files:
     parsed = parse_excel(f)
     datasets[f.name] = parsed
 
-# 파싱 완료 → 로딩 제거
+# 파싱 완료 → 스피너 제거
 loader_placeholder.empty()
 
 st.success(f"✅ {len(uploaded_files)}개 파일 로드 완료: {', '.join([f.name for f in uploaded_files])}")
@@ -542,9 +568,9 @@ else:
     keys = list(datasets.keys())
     col1, col2 = st.columns(2)
     with col1:
-        main_key = st.selectbox("📅 현재 주차 파일", keys, index=len(keys)-1)
+        main_key = st.selectbox("📅 이번 주 파일", keys, index=len(keys)-1)
     with col2:
-        prev_key = st.selectbox("📅 이전 주차 파일", keys, index=0)
+        prev_key = st.selectbox("📅 지난 주 파일", keys, index=0)
     main_data = datasets[main_key]
     compare_data = datasets[prev_key]
 
