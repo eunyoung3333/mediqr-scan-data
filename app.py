@@ -493,8 +493,8 @@ if not uploaded_files or curr_count < 2:
     """, unsafe_allow_html=True)
     st.stop()
 
-# 상태 2: 파일 2개 업로드 완료, 버튼 미클릭
-if not st.session_state['run_analysis']:
+# 상태 2: 파일 2개 업로드 완료, 버튼 미클릭 (do_parse 아닐 때만 멈춤)
+if not st.session_state['run_analysis'] and not st.session_state.get('do_parse'):
     st.markdown("""
     <div class="upload-hint">
         <div style="font-size:2rem; margin-bottom:8px">📊</div>
