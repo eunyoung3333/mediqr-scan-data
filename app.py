@@ -133,6 +133,46 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] {
         font-weight: 600;
     }
+
+    /* ── 로딩 오버레이 (TT 스타일) ── */
+    #tt-loader {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    #tt-loader .tt-pct {
+        font-family: 'Pretendard', monospace;
+        font-size: clamp(5rem, 20vw, 15rem);
+        font-weight: 800;
+        color: #fff;
+        letter-spacing: -0.04em;
+        line-height: 1;
+    }
+    #tt-loader .tt-label {
+        font-size: 0.95rem;
+        color: #555;
+        letter-spacing: 0.35em;
+        text-transform: uppercase;
+        margin-top: 1.2rem;
+    }
+    #tt-loader .tt-bar-wrap {
+        width: min(360px, 60vw);
+        height: 2px;
+        background: #1a1a1a;
+        margin-top: 2rem;
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    #tt-loader .tt-bar-fill {
+        height: 100%;
+        background: #fff;
+        width: 0%;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -181,13 +221,11 @@ def parse_excel(file) -> dict:
     # 4) ★약국 요약 시트 — 누적 주차별 집계 파싱
     if '★약국 - 환급자 수, 메디QR 진입, 바코드 수' in xl:
         s = xl['★약국 - 환급자 수, 메디QR 진입, 바코드 수'].copy()
-        # row 5=헤더, row 6~=주차별 누적 합계 (기준/환급/진입/바코드실행유저/바코드스캔)
         rows = []
         for i in range(6, min(6+10, len(s))):
             label = str(s.iloc[i, 1]).strip()
             if label in ('nan', '', '변동률'):
                 continue
-            # 주차 합계 행만 포함 (~ 로 시작하는 행)
             if not label.startswith('~'):
                 continue
             try:
@@ -202,7 +240,6 @@ def parse_excel(file) -> dict:
                 pass
         result['weekly_summary'] = rows
 
-        # 약국별 상세 (row 11=헤더, row 12~=약국 데이터)
         pharm_rows = []
         for i in range(12, len(s)):
             name = str(s.iloc[i, 1]).strip()
@@ -224,7 +261,6 @@ def parse_excel(file) -> dict:
 
 
 def extract_weekly_summary(data: dict) -> pd.DataFrame:
-    """약국별 주차별 집계"""
     if 'ga' not in data:
         return pd.DataFrame()
     df = data['ga'].copy()
@@ -238,7 +274,6 @@ def extract_weekly_summary(data: dict) -> pd.DataFrame:
 
 
 def compute_wow(weekly: pd.DataFrame) -> pd.DataFrame:
-    """전주 대비 증감률 계산"""
     if weekly.empty:
         return pd.DataFrame()
     weeks = sorted(weekly['주차'].unique())
@@ -259,29 +294,23 @@ def compute_wow(weekly: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) -> list:
-    """규칙 기반 자동 인사이트 생성 — API 불필요"""
     insights = []
-
     total_users = int(main_df['총 사용자 수'].sum())
     total_scans = int(main_df['바코드 이벤트 횟수'].sum())
     total_pharmacies = main_df['약국'].nunique()
     conv_rate = total_scans / total_users * 100 if total_users > 0 else 0
 
-    # ── 1. 전주 대비 전체 변화 ──
     if compare_df is not None:
         prev_users = int(compare_df['총 사용자 수'].sum())
         prev_scans = int(compare_df['바코드 이벤트 횟수'].sum())
         prev_pharmacies = compare_df['약국'].nunique()
-
         user_chg = (total_users - prev_users) / prev_users * 100 if prev_users > 0 else 0
         scan_chg = (total_scans - prev_scans) / prev_scans * 100 if prev_scans > 0 else 0
         pharm_chg = total_pharmacies - prev_pharmacies
-
         arrow_u = "▲" if user_chg >= 0 else "▼"
         arrow_s = "▲" if scan_chg >= 0 else "▼"
         color_u = "🟢" if user_chg >= 0 else "🔴"
         color_s = "🟢" if scan_chg >= 0 else "🔴"
-
         insights.append({
             "type": "summary",
             "title": "📊 전주 대비 전체 변화",
@@ -292,7 +321,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
             ]
         })
 
-    # ── 2. 약국별 급등/급락 감지 ──
     if compare_df is not None:
         curr_p = main_df.groupby('약국')['총 사용자 수'].sum().reset_index(name='현재')
         prev_p = compare_df.groupby('약국')['총 사용자 수'].sum().reset_index(name='이전')
@@ -301,19 +329,14 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
             lambda r: (r['현재'] - r['이전']) / r['이전'] * 100 if r['이전'] > 0 else None, axis=1
         )
         merged = merged.dropna(subset=['증감률'])
-
         surge = merged[merged['증감률'] >= 30].sort_values('증감률', ascending=False).head(3)
         drop = merged[merged['증감률'] <= -30].sort_values('증감률').head(3)
-
         surge_items = [f"🔥 {r['약국']}: {int(r['이전'])}명 → {int(r['현재'])}명 (+{r['증감률']:.0f}%)" for _, r in surge.iterrows()]
         drop_items = [f"❄️ {r['약국']}: {int(r['이전'])}명 → {int(r['현재'])}명 ({r['증감률']:.0f}%)" for _, r in drop.iterrows()]
-
         if surge_items:
             insights.append({"type": "alert_up", "title": "🔥 급등 약국 (전주 대비 +30% 이상)", "items": surge_items})
         if drop_items:
             insights.append({"type": "alert_down", "title": "❄️ 급감 약국 (전주 대비 -30% 이하)", "items": drop_items})
-
-        # 신규 진입 / 이탈 약국
         new_pharm = set(main_df['약국'].unique()) - set(compare_df['약국'].unique())
         lost_pharm = set(compare_df['약국'].unique()) - set(main_df['약국'].unique())
         entry_items = []
@@ -324,7 +347,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
         if entry_items:
             insights.append({"type": "info", "title": "🏪 약국 변동", "items": entry_items})
 
-    # ── 3. 전환율 분석 ──
     pharm_df = main_df.groupby('약국').agg(
         총사용자=('총 사용자 수', 'sum'),
         바코드사용자=('바코드 사용 유저', 'sum'),
@@ -332,10 +354,8 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
     pharm_df['전환율'] = pharm_df.apply(
         lambda r: r['바코드사용자'] / r['총사용자'] * 100 if r['총사용자'] > 0 else 0, axis=1
     )
-
     high_conv = pharm_df[(pharm_df['총사용자'] >= 3) & (pharm_df['전환율'] >= 20)].sort_values('전환율', ascending=False).head(3)
     zero_conv = pharm_df[(pharm_df['총사용자'] >= 5) & (pharm_df['전환율'] == 0)].sort_values('총사용자', ascending=False).head(3)
-
     conv_items = []
     if not high_conv.empty:
         conv_items += [f"✅ {r['약국']}: 전환율 {r['전환율']:.0f}% ({int(r['바코드사용자'])}/{int(r['총사용자'])}명)" for _, r in high_conv.iterrows()]
@@ -344,7 +364,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
     if conv_items:
         insights.append({"type": "conversion", "title": f"🎯 바코드 전환율 분석 (전체 평균: {conv_rate:.1f}%)", "items": conv_items})
 
-    # ── 4. 매체별 효율 비교 ──
     if '유입 매체' in main_df.columns:
         media_df = main_df.groupby('유입 매체').agg(
             총사용자=('총 사용자 수', 'sum'),
@@ -356,7 +375,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
         media_df = media_df.sort_values('효율', ascending=False)
         top_media = media_df.iloc[0] if len(media_df) > 0 else None
         low_media = media_df[media_df['총사용자'] >= 5].sort_values('효율').iloc[0] if len(media_df[media_df['총사용자'] >= 5]) > 0 else None
-
         media_items = [f"방문자 {int(r['총사용자'])}명 / 스캔 {int(r['바코드스캔'])}회 / 효율 {r['효율']:.1f}% — {r['유입 매체']}" for _, r in media_df.iterrows()]
         if top_media is not None:
             media_items.append(f"👑 최고 효율 매체: {top_media['유입 매체']} ({top_media['효율']:.1f}%)")
@@ -364,7 +382,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
             media_items.append(f"💡 개선 필요 매체: {low_media['유입 매체']} ({low_media['효율']:.1f}%)")
         insights.append({"type": "media", "title": "📣 유입 매체별 효율", "items": media_items})
 
-    # ── 5. 액션 아이템 ──
     actions = []
     if conv_rate < 10:
         actions.append("📌 전체 바코드 전환율이 낮습니다. QR 위치 및 안내 문구 점검을 권장합니다.")
@@ -378,7 +395,6 @@ def generate_insights(main_df: pd.DataFrame, compare_df: pd.DataFrame = None) ->
         actions.append(f"📌 바코드 스캔이 0인 약국({len(zero_conv)}곳)에 QR 인식 테스트 및 위치 재점검이 필요합니다.")
     if not actions:
         actions.append("📌 전반적으로 안정적인 운영 중입니다. 매주 전환율 트렌드를 모니터링하세요.")
-
     insights.append({"type": "action", "title": "✅ 이번 주 액션 아이템", "items": actions})
 
     return insights
@@ -398,109 +414,141 @@ st.markdown("""
 
 st.divider()
 
-# 사이드바
+# ═══════════════════════════════════════════════════════════════════════════════
+# 수정 1·2: 사이드바 — 파일 2개 시 + 버튼 숨김 & 분석 시작하기 버튼 노출
+# ═══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown('### 📂 파일 업로드')
-    st.markdown('이전 주차(A) + 현재 주차(B) 파일을 업로드하세요')
+    st.markdown("### 📂 파일 업로드")
+    st.markdown("매주 새로운 엑셀 파일을 업로드하세요")
 
     uploaded_files = st.file_uploader(
-        '엑셀 파일 2개 업로드',
+        "엑셀 파일 (최대 2개)",
         type=['xlsx'],
         accept_multiple_files=True,
-        key='uploaded_files',
-        help='A파일(이전 누적) + B파일(최신 누적)'
+        help="이전 주 + 현재 주 파일을 함께 올리거나, 1개만 올려도 됩니다"
     )
 
-    # 파일 2개 올라오면 드롭존 숨김
+    # ── 수정 2: 파일 2개 업로드 시 + 드롭존 숨김 ──
     if uploaded_files and len(uploaded_files) >= 2:
-        st.markdown('<style>[data-testid="stFileUploaderDropzone"]{display:none!important}</style>', unsafe_allow_html=True)
+        st.markdown(
+            "<style>[data-testid='stFileUploaderDropzone']{display:none!important}</style>",
+            unsafe_allow_html=True
+        )
+
+    # ── 수정 1: 파일 2개 업로드 시 분석 시작하기 버튼 노출 ──
+    if uploaded_files and len(uploaded_files) >= 2:
+        if st.button("🔍 분석 시작하기", type="primary", use_container_width=True):
+            st.session_state['run_analysis'] = True
 
     st.divider()
-    st.markdown('### ⚙️ 설정')
-    show_raw = st.toggle('📋 원시 데이터 보기', value=False)
+    st.markdown("### ⚙️ 설정")
+    show_raw = st.toggle("📋 원시 데이터 보기", value=False)
 
     st.divider()
-    st.markdown('<div style="font-size:0.8rem;color:#94A3B8;line-height:1.6"><b>지원 시트</b><br>• RAW_GA 변환 (핵심)<br>• ★약국 요약 시트<br>• 제작물 리스트</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="font-size:0.8rem; color:#94A3B8; line-height:1.6">
+    <b>지원 시트</b><br>
+    • RAW_GA 변환 (핵심)<br>
+    • 제작물 리스트<br>
+    • 요약 시트<br>
+    • 환급 데이터
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if not uploaded_files:
-    st.markdown('<div class="upload-hint"><div style="font-size:2rem;margin-bottom:8px">📊</div><div style="font-weight:600;font-size:1rem;margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div><div>A파일(이전 누적) + B파일(이번 주 누적)</div></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="upload-hint">
+        <div style="font-size:2rem; margin-bottom:8px">📊</div>
+        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일을 업로드하세요</div>
+        <div>1개 파일: 최신 주차 분석 | 2개 파일: 주차 간 비교 분석</div>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
-# 파일 선택 UI
-keys_list = [f.name for f in uploaded_files]
-if len(uploaded_files) == 1:
-    main_key = keys_list[0]
-    prev_key = None
-else:
-    col1, col2 = st.columns(2)
-    with col1:
-        main_key = st.selectbox('📅 B파일 (최신 누적)', keys_list, index=len(keys_list)-1)
-    with col2:
-        prev_options = [k for k in keys_list if k != main_key]
-        prev_key = st.selectbox('📅 A파일 (이전 누적)', prev_options, index=0) if prev_options else None
-
-# 분석 시작 버튼 (파일 2개 필요)
-if len(uploaded_files) < 2:
-    st.info('📂 파일을 2개 모두 업로드하면 분석 시작하기 버튼이 활성화됩니다.')
-
-btn_col, _ = st.columns([1, 2])
-with btn_col:
-    btn_disabled = len(uploaded_files) < 2
-    if st.button('🔍 분석 시작하기', type='primary', disabled=btn_disabled, use_container_width=True):
-        st.session_state['run_analysis'] = True
-
+# ── 수정 3: 분석 시작 전 대기 ──
 if not st.session_state.get('run_analysis'):
+    if len(uploaded_files) < 2:
+        st.info("📂 파일을 2개 모두 업로드하면 사이드바에 '분석 시작하기' 버튼이 나타납니다.")
+    else:
+        st.info("👈 사이드바의 '분석 시작하기' 버튼을 눌러주세요.")
     st.stop()
 
-# TT 스타일 로딩 오버레이
-st.markdown("""
+# ═══════════════════════════════════════════════════════════════════════════════
+# 수정 3: TT 스타일 로딩 오버레이 — 분석 시작 직후 표시, 완료 시 페이드아웃
+# ═══════════════════════════════════════════════════════════════════════════════
+loader_placeholder = st.empty()
+loader_placeholder.markdown("""
 <div id="tt-loader">
-  <div class="pct" id="tt-pct">0%</div>
-  <div class="label">데이터 분석 중</div>
-  <div class="bar-wrap"><div class="bar-fill" id="tt-bar"></div></div>
+  <div class="tt-pct" id="tt-pct">0%</div>
+  <div class="tt-label">데이터 분석 중</div>
+  <div class="tt-bar-wrap">
+    <div class="tt-bar-fill" id="tt-bar"></div>
+  </div>
 </div>
 <script>
-(function(){
-  var el=document.getElementById('tt-pct');
-  var bar=document.getElementById('tt-bar');
-  var loader=document.getElementById('tt-loader');
-  var n=0, idx=0;
-  var steps=[];
-  for(var i=0;i<55;i++) steps.push(1);
-  for(var i=0;i<30;i++) steps.push(2);
-  for(var i=0;i<5;i++)  steps.push(1);
+(function () {
+  var el     = document.getElementById('tt-pct');
+  var bar    = document.getElementById('tt-bar');
+  var loader = document.getElementById('tt-loader');
+  if (!el || !loader) return;
+
+  var n = 0, idx = 0;
+  /* 가속 커브: 느리게 → 빠르게 → 살짝 브레이크 → 점프 */
+  var steps = [];
+  for (var i = 0; i < 50; i++) steps.push(1);
+  for (var i = 0; i < 35; i++) steps.push(2);
+  for (var i = 0; i < 8;  i++) steps.push(1);
   steps.push(5);
-  var iv=setInterval(function(){
-    if(idx>=steps.length||n>=100){
-      n=100; el.textContent='100%'; bar.style.width='100%';
+
+  var iv = setInterval(function () {
+    if (idx >= steps.length || n >= 100) {
+      n = 100;
+      el.textContent  = '100%';
+      bar.style.width = '100%';
       clearInterval(iv);
-      setTimeout(function(){
-        loader.style.transition='opacity 0.7s ease';
-        loader.style.opacity='0';
-        setTimeout(function(){loader.style.display='none';},750);
-      },400);
+      setTimeout(function () {
+        loader.style.transition = 'opacity 0.7s ease';
+        loader.style.opacity    = '0';
+        setTimeout(function () { loader.style.display = 'none'; }, 750);
+      }, 350);
       return;
     }
-    n=Math.min(100,n+steps[idx++]);
-    el.textContent=n+'%';
-    bar.style.width=n+'%';
-  },28);
+    n = Math.min(100, n + steps[idx++]);
+    el.textContent  = n + '%';
+    bar.style.width = n + '%';
+  }, 28);
 })();
 </script>
 """, unsafe_allow_html=True)
 
-import time; time.sleep(0.15)
-
-# 데이터 파싱
+# 데이터 파싱 (로딩 중에 실행)
 datasets = {}
 for f in uploaded_files:
-    datasets[f.name] = parse_excel(f)
+    parsed = parse_excel(f)
+    datasets[f.name] = parsed
 
-main_data = datasets[main_key]
-compare_data = datasets[prev_key] if prev_key and prev_key in datasets else None
+# 파싱 완료 → 로딩 제거
+loader_placeholder.empty()
 
-tabs = st.tabs(['📈 주간 요약', '🏪 약국별 분석', '🎯 디자인물 분석', '💡 자동 인사이트'])
+st.success(f"✅ {len(uploaded_files)}개 파일 로드 완료: {', '.join([f.name for f in uploaded_files])}")
+
+# 분석 대상 선택 (파일이 여러 개일 경우)
+if len(datasets) == 1:
+    main_key = list(datasets.keys())[0]
+    main_data = datasets[main_key]
+    compare_data = None
+else:
+    keys = list(datasets.keys())
+    col1, col2 = st.columns(2)
+    with col1:
+        main_key = st.selectbox("📅 현재 주차 파일", keys, index=len(keys)-1)
+    with col2:
+        prev_key = st.selectbox("📅 이전 주차 파일", keys, index=0)
+    main_data = datasets[main_key]
+    compare_data = datasets[prev_key]
+
+tabs = st.tabs(["📈 주간 요약", "🏪 약국별 분석", "🎯 디자인물 분석", "💡 자동 인사이트"])
 
 
 # ── 탭 1: 주간 요약 ──────────────────────────────────────────────────────────
@@ -510,21 +558,15 @@ with tabs[0]:
     if 'ga' in main_data:
         df = main_data['ga']
 
-        # ── ★약국 시트에서 누적 합계 추출 ──────────────────────────────────────
-        # A파일(이전): weekly_summary의 마지막 행 = N주 누적
-        # B파일(현재): weekly_summary의 마지막 행 = N+1주 누적
-        # 두 파일의 차이 = 이번 1주간 신규 수치
-
         def get_latest_summary(data):
             rows = data.get('weekly_summary', [])
             if rows:
-                return rows[-1]  # 가장 최근 누적 행
+                return rows[-1]
             return None
 
         curr_sum = get_latest_summary(main_data)
         prev_sum = get_latest_summary(compare_data) if compare_data else None
 
-        # 메디QR 진입 유저 수 증감 (B누적 - A누적)
         if curr_sum and prev_sum:
             new_visitors = int((curr_sum.get('메디QR진입유저수') or 0) - (prev_sum.get('메디QR진입유저수') or 0))
             new_barcode_users = int((curr_sum.get('바코드실행유저수') or 0) - (prev_sum.get('바코드실행유저수') or 0))
@@ -538,15 +580,12 @@ with tabs[0]:
             prev_barcode = 0
             has_compare = False
         else:
-            # fallback: GA 시트에서 계산
             new_visitors = int(df['총 사용자 수'].sum())
             new_barcode_users = int(df['바코드 사용 유저'].sum())
             prev_visitors = 0
             prev_barcode = 0
             has_compare = False
 
-        # 활성 약국 수: B파일의 +1주 기간 동안 바코드 스캔이 일어난 약국
-        # GA 시트에서 이전 파일 기간 이후 날짜의 데이터만 필터
         if compare_data and 'ga' in compare_data:
             prev_max_date = compare_data['ga']['유입 일자'].max()
             new_week_df = df[df['유입 일자'] > prev_max_date]
@@ -554,8 +593,6 @@ with tabs[0]:
             new_week_df = df
 
         active_pharmacies = new_week_df[new_week_df['바코드 이벤트 횟수'] > 0]['약국'].nunique()
-
-        # 전환율 (이번 주 신규 기간 기준)
         new_week_visitors = int(new_week_df['총 사용자 수'].sum())
         new_week_barcode = int(new_week_df['바코드 사용 유저'].sum())
         conv_rate = new_week_barcode / new_week_visitors * 100 if new_week_visitors > 0 else 0
@@ -600,7 +637,6 @@ with tabs[0]:
 
         st.markdown('<div class="section-header">일별 방문 트렌드</div>', unsafe_allow_html=True)
 
-        # 이번 주(+1주) 기간만 트렌드 표시
         trend_df = new_week_df if (compare_data and 'ga' in compare_data) else df
         daily = trend_df.groupby('유입 일자').agg(
             총사용자=('총 사용자 수', 'sum'),
@@ -659,7 +695,6 @@ with tabs[1]:
                                 yaxis={'categoryorder': 'total ascending'})
             st.plotly_chart(fig2, use_container_width=True)
 
-        # 주차별 비교 (2개 파일일 때)
         if compare_data and 'ga' in compare_data:
             st.markdown('<div class="section-header">전주 대비 변화</div>', unsafe_allow_html=True)
 
@@ -717,7 +752,6 @@ with tabs[2]:
             media_df['스캔전환율(%)'] = (media_df['바코드스캔'] / media_df['총사용자'] * 100).round(1)
             st.dataframe(media_df, use_container_width=True, hide_index=True)
 
-        # 방문 페이지 분석
         if '방문 페이지' in df.columns:
             st.markdown('<div class="section-header">방문 페이지별 분석</div>', unsafe_allow_html=True)
             page_df = df.groupby('방문 페이지').agg(
@@ -743,7 +777,6 @@ with tabs[3]:
         compare_df_for_insight = compare_data['ga'] if compare_data and 'ga' in compare_data else None
         insights = generate_insights(main_data['ga'], compare_df_for_insight)
 
-        # 인사이트 박스 색상 매핑
         style_map = {
             "summary":    ("linear-gradient(135deg,#EEF2FF,#F0F9FF)", "#C7D2FE", "#3730A3"),
             "alert_up":   ("linear-gradient(135deg,#F0FDF4,#ECFDF5)", "#86EFAC", "#166534"),
