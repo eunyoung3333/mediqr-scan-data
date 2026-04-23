@@ -141,22 +141,33 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         padding: 60px 0;
-        gap: 20px;
+        gap: 12px;
+        background: #F0FDF4;
+        border: 1px dashed #86EFAC;
+        border-radius: 12px;
     }
-    .mq-spinner {
+    .mq-spinner-label {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #166534;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+    }
+    .mq-spinner-canvas-wrap {
         position: relative;
-        width: 72px;
-        height: 72px;
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     .mq-spinner-pct {
-        font-size: 0.85rem;
+        position: absolute;
+        font-size: 0.75rem;
         font-weight: 700;
         color: #4F6EF7;
-        letter-spacing: 0.05em;
-    }
-    .mq-spinner canvas {
-        position: absolute;
-        inset: 0;
+        letter-spacing: 0.02em;
+        pointer-events: none;
     }
     /* 분석 완료 후 버튼 비활성 스타일 */
     .btn-done button {
@@ -477,22 +488,36 @@ if not uploaded_files:
     """, unsafe_allow_html=True)
     st.stop()
 
-# 분석 시작 전 대기
+# 분석 시작 전 대기 — 이미지 2번처럼 upload-hint 박스 그대로 유지
 if not st.session_state.get('run_analysis'):
     if len(uploaded_files) < 2:
-        st.info("📂 파일을 2개 모두 업로드하면 사이드바에 '분석 시작하기' 버튼이 나타납니다.")
+        st.markdown("""
+    <div class="upload-hint">
+        <div style="font-size:2rem; margin-bottom:8px">📊</div>
+        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div>
+        <div>A파일(지난 주 누적) + B파일(이번 주 누적)</div>
+    </div>
+        """, unsafe_allow_html=True)
     else:
-        st.info("👈 사이드바의 '분석 시작하기' 버튼을 눌러주세요.")
+        # 파일 2개 올라왔지만 버튼 미클릭 — 이미지 2번 상태
+        st.markdown("""
+    <div class="upload-hint">
+        <div style="font-size:2rem; margin-bottom:8px">📊</div>
+        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div>
+        <div>A파일(지난 주 누적) + B파일(이번 주 누적)</div>
+    </div>
+        """, unsafe_allow_html=True)
     st.stop()
 
-# 3. 스피너 로딩 — 메인 영역(upload-hint 자리)에 표시, 파싱 완료 후 제거
+# 3. 스피너 로딩 — 이미지 1번처럼 "분석중" + 스피너 안에 %
 loader_placeholder = st.empty()
 loader_placeholder.markdown("""
 <div class="mq-spinner-wrap">
-  <div class="mq-spinner">
-    <canvas id="mq-canvas" width="72" height="72"></canvas>
+  <div class="mq-spinner-label">분석중</div>
+  <div class="mq-spinner-canvas-wrap">
+    <canvas id="mq-canvas" width="80" height="80"></canvas>
+    <span class="mq-spinner-pct" id="mq-pct">0%</span>
   </div>
-  <div class="mq-spinner-pct" id="mq-pct">0%</div>
 </div>
 <script>
 (function () {
@@ -500,35 +525,28 @@ loader_placeholder.markdown("""
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
   var pctEl = document.getElementById('mq-pct');
-  var total = 12, size = 36, barW = 4.5, barH = 12, r = 20;
+  var total = 12, cx = 40, cy = 40, barW = 5, barH = 13, r = 24;
   var pct = 0, frame = 0;
 
-  function draw(angle) {
-    ctx.clearRect(0, 0, 72, 72);
+  function draw(tick) {
+    ctx.clearRect(0, 0, 80, 80);
     for (var i = 0; i < total; i++) {
       var a = (i / total) * Math.PI * 2 - Math.PI / 2;
-      var x = size + Math.cos(a) * r - barW / 2;
-      var y = size + Math.sin(a) * r - barH / 2;
-      var diff = ((angle - i) % total + total) % total;
-      var alpha = 0.15 + (diff / total) * 0.85;
+      var diff = ((tick - i) % total + total) % total;
+      var alpha = 0.12 + (diff / (total - 1)) * 0.88;
       ctx.save();
-      ctx.translate(x + barW / 2, y + barH / 2);
+      ctx.translate(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
       ctx.rotate(a + Math.PI / 2);
       ctx.beginPath();
-      ctx.roundRect(-barW / 2, -barH / 2, barW, barH, 2);
-      ctx.fillStyle = 'rgba(79,110,247,' + alpha + ')';
+      ctx.roundRect(-barW / 2, -barH / 2, barW, barH, 2.5);
+      ctx.fillStyle = 'rgba(79,110,247,' + alpha.toFixed(2) + ')';
       ctx.fill();
       ctx.restore();
     }
   }
 
-  /* 스피너 회전 */
-  var spinIv = setInterval(function () {
-    draw(frame % total);
-    frame++;
-  }, 80);
+  var spinIv = setInterval(function () { draw(frame++ % total); }, 80);
 
-  /* % 카운트업 */
   var steps = [];
   for (var i = 0; i < 50; i++) steps.push(1);
   for (var i = 0; i < 35; i++) steps.push(2);
@@ -537,9 +555,7 @@ loader_placeholder.markdown("""
   var idx = 0;
   var pctIv = setInterval(function () {
     if (idx >= steps.length || pct >= 100) {
-      pct = 100; pctEl.textContent = '100%';
-      clearInterval(pctIv);
-      return;
+      pct = 100; pctEl.textContent = '100%'; clearInterval(pctIv); return;
     }
     pct = Math.min(100, pct + steps[idx++]);
     pctEl.textContent = pct + '%';
