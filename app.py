@@ -423,12 +423,18 @@ if 'run_analysis' not in st.session_state:
     st.session_state['run_analysis'] = False
 if 'prev_file_count' not in st.session_state:
     st.session_state['prev_file_count'] = 0
+if 'datasets' not in st.session_state:
+    st.session_state['datasets'] = {}
+if 'main_key' not in st.session_state:
+    st.session_state['main_key'] = None
+if 'prev_key' not in st.session_state:
+    st.session_state['prev_key'] = None
 
+# ── 사이드바 ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 📂 파일 업로드")
     st.markdown("이전 주차(A) + 현재 주차(B) 파일을 업로드하세요")
 
-    # 4. 파일 업로드 (드롭존 + 파일 리스트 표시)
     uploaded_files = st.file_uploader(
         "엑셀 파일 2개 업로드",
         type=['xlsx'],
@@ -436,31 +442,37 @@ with st.sidebar:
         help="A파일(지난 주 누적) + B파일(이번 주 누적)"
     )
 
-    # 파일 수가 줄어들면 분석 상태 초기화 (2. 파일 삭제 시 버튼 재활성화)
     curr_count = len(uploaded_files) if uploaded_files else 0
+
+    # 파일 수 줄면 분석 상태 초기화 → 버튼 재활성화
     if curr_count < st.session_state['prev_file_count']:
         st.session_state['run_analysis'] = False
+        st.session_state['datasets'] = {}
     st.session_state['prev_file_count'] = curr_count
 
-    # 2. 파일 2개 시 + 드롭존 숨김
-    if uploaded_files and len(uploaded_files) >= 2:
+    # 파일 2개 시 + 드롭존 숨김
+    if curr_count >= 2:
         st.markdown(
             "<style>[data-testid='stFileUploaderDropzone']{display:none!important}</style>",
             unsafe_allow_html=True
         )
 
-    # 1. 파일 2개 업로드 시 분석 시작하기 버튼 노출 (파일 리스트 바로 아래)
-    if uploaded_files and len(uploaded_files) >= 2:
-        # 2. 분석 완료 후 비활성 처리
-        already_done = st.session_state.get('run_analysis', False)
+    # 분석 시작하기 버튼 — 파일 2개일 때만 노출, 파일 리스트 바로 아래
+    if curr_count >= 2:
+        already_done = st.session_state['run_analysis']
         if already_done:
-            st.markdown('<div class="btn-done">', unsafe_allow_html=True)
             st.button("✅ 분석 완료", type="primary", use_container_width=True, disabled=True)
-            st.markdown('</div>', unsafe_allow_html=True)
         else:
             if st.button("🔍 분석 시작하기", type="primary", use_container_width=True):
+                # 버튼 클릭 시 즉시 파싱 실행 (rerun 없이)
+                datasets_new = {}
+                for f in uploaded_files:
+                    datasets_new[f.name] = parse_excel(f)
+                st.session_state['datasets'] = datasets_new
+                keys_list = list(datasets_new.keys())
+                st.session_state['main_key'] = keys_list[-1]
+                st.session_state['prev_key'] = keys_list[0] if len(keys_list) > 1 else None
                 st.session_state['run_analysis'] = True
-                st.rerun()
 
     st.divider()
     st.markdown("### ⚙️ 설정")
@@ -477,8 +489,10 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+# ── 메인 영역 ─────────────────────────────────────────────────────────────────
 
-if not uploaded_files:
+# 상태 1: 파일 미업로드 또는 1개만 업로드
+if not uploaded_files or curr_count < 2:
     st.markdown("""
     <div class="upload-hint">
         <div style="font-size:2rem; margin-bottom:8px">📊</div>
@@ -488,30 +502,23 @@ if not uploaded_files:
     """, unsafe_allow_html=True)
     st.stop()
 
-# 분석 시작 전 대기 — 이미지 2번처럼 upload-hint 박스 그대로 유지
-if not st.session_state.get('run_analysis'):
-    if len(uploaded_files) < 2:
-        st.markdown("""
+# 상태 2: 파일 2개 업로드 완료, 버튼 미클릭
+if not st.session_state['run_analysis']:
+    st.markdown("""
     <div class="upload-hint">
         <div style="font-size:2rem; margin-bottom:8px">📊</div>
         <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div>
         <div>A파일(지난 주 누적) + B파일(이번 주 누적)</div>
     </div>
-        """, unsafe_allow_html=True)
-    else:
-        # 파일 2개 올라왔지만 버튼 미클릭 — 이미지 2번 상태
-        st.markdown("""
-    <div class="upload-hint">
-        <div style="font-size:2rem; margin-bottom:8px">📊</div>
-        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div>
-        <div>A파일(지난 주 누적) + B파일(이번 주 누적)</div>
-    </div>
-        """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
     st.stop()
 
-# 3. 스피너 로딩 — 이미지 1번처럼 "분석중" + 스피너 안에 %
-loader_placeholder = st.empty()
-loader_placeholder.markdown("""
+# 상태 3: 분석 실행 중 or 완료
+# 파싱된 데이터가 session_state에 없으면 (첫 클릭 직후) 스피너 + 파싱
+if not st.session_state['datasets']:
+    # 스피너 표시
+    spinner_slot = st.empty()
+    spinner_slot.markdown("""
 <div class="mq-spinner-wrap">
   <div class="mq-spinner-label">분석중</div>
   <div class="mq-spinner-canvas-wrap">
@@ -519,76 +526,100 @@ loader_placeholder.markdown("""
     <span class="mq-spinner-pct" id="mq-pct">0%</span>
   </div>
 </div>
+<style>
+@keyframes mq-spin {
+  to { transform: rotate(360deg); }
+}
+.mq-fallback-spinner {
+  width:60px; height:60px;
+  border: 6px solid #E0E7FF;
+  border-top-color: #4F6EF7;
+  border-radius: 50%;
+  animation: mq-spin 0.8s linear infinite;
+}
+</style>
 <script>
-(function () {
-  var canvas = document.getElementById('mq-canvas');
-  if (!canvas) return;
-  var ctx = canvas.getContext('2d');
-  var pctEl = document.getElementById('mq-pct');
-  var total = 12, cx = 40, cy = 40, barW = 5, barH = 13, r = 24;
-  var pct = 0, frame = 0;
-
-  function draw(tick) {
-    ctx.clearRect(0, 0, 80, 80);
-    for (var i = 0; i < total; i++) {
-      var a = (i / total) * Math.PI * 2 - Math.PI / 2;
-      var diff = ((tick - i) % total + total) % total;
-      var alpha = 0.12 + (diff / (total - 1)) * 0.88;
-      ctx.save();
-      ctx.translate(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-      ctx.rotate(a + Math.PI / 2);
-      ctx.beginPath();
-      ctx.roundRect(-barW / 2, -barH / 2, barW, barH, 2.5);
-      ctx.fillStyle = 'rgba(79,110,247,' + alpha.toFixed(2) + ')';
-      ctx.fill();
-      ctx.restore();
+(function(){
+  function tryDraw() {
+    var canvas = document.getElementById('mq-canvas');
+    var pctEl  = document.getElementById('mq-pct');
+    if (!canvas || !canvas.getContext) {
+      /* canvas 지원 안되면 CSS 스피너로 fallback */
+      var wrap = canvas ? canvas.parentElement : null;
+      if (wrap) {
+        wrap.innerHTML = '<div class="mq-fallback-spinner"></div>';
+      }
+      return;
     }
+    var ctx = canvas.getContext('2d');
+    var total=12, cx=40, cy=40, barW=5, barH=13, r=24;
+    var pct=0, frame=0;
+    function draw(tick){
+      ctx.clearRect(0,0,80,80);
+      for(var i=0;i<total;i++){
+        var a=(i/total)*Math.PI*2-Math.PI/2;
+        var diff=((tick-i)%total+total)%total;
+        var alpha=0.12+(diff/(total-1))*0.88;
+        ctx.save();
+        ctx.translate(cx+Math.cos(a)*r, cy+Math.sin(a)*r);
+        ctx.rotate(a+Math.PI/2);
+        ctx.beginPath();
+        ctx.roundRect(-barW/2,-barH/2,barW,barH,2.5);
+        ctx.fillStyle='rgba(79,110,247,'+alpha.toFixed(2)+')';
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    setInterval(function(){ draw(frame++%total); }, 80);
+    var steps=[];
+    for(var i=0;i<50;i++) steps.push(1);
+    for(var i=0;i<35;i++) steps.push(2);
+    for(var i=0;i<8;i++)  steps.push(1);
+    steps.push(5);
+    var idx=0;
+    setInterval(function(){
+      if(idx>=steps.length||pct>=100){ pct=100; if(pctEl) pctEl.textContent='100%'; return; }
+      pct=Math.min(100,pct+steps[idx++]);
+      if(pctEl) pctEl.textContent=pct+'%';
+    }, 28);
   }
-
-  var spinIv = setInterval(function () { draw(frame++ % total); }, 80);
-
-  var steps = [];
-  for (var i = 0; i < 50; i++) steps.push(1);
-  for (var i = 0; i < 35; i++) steps.push(2);
-  for (var i = 0; i < 8;  i++) steps.push(1);
-  steps.push(5);
-  var idx = 0;
-  var pctIv = setInterval(function () {
-    if (idx >= steps.length || pct >= 100) {
-      pct = 100; pctEl.textContent = '100%'; clearInterval(pctIv); return;
-    }
-    pct = Math.min(100, pct + steps[idx++]);
-    pctEl.textContent = pct + '%';
-  }, 28);
+  /* DOM 준비 후 실행 */
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', tryDraw);
+  } else {
+    setTimeout(tryDraw, 50);
+  }
 })();
 </script>
 """, unsafe_allow_html=True)
+    # 파싱 실행
+    datasets_new = {}
+    for f in uploaded_files:
+        datasets_new[f.name] = parse_excel(f)
+    st.session_state['datasets'] = datasets_new
+    keys_list = list(datasets_new.keys())
+    st.session_state['main_key'] = keys_list[-1]
+    st.session_state['prev_key'] = keys_list[0] if len(keys_list) > 1 else None
+    spinner_slot.empty()
 
-# 데이터 파싱 (로딩 중에 실행)
-datasets = {}
-for f in uploaded_files:
-    parsed = parse_excel(f)
-    datasets[f.name] = parsed
+# 파싱 완료된 데이터 사용
+datasets = st.session_state['datasets']
+main_key = st.session_state['main_key']
+prev_key = st.session_state['prev_key']
 
-# 파싱 완료 → 스피너 제거
-loader_placeholder.empty()
+# 사이드바에서 파일 순서 재선택 가능
+with st.sidebar:
+    if len(datasets) >= 2:
+        keys = list(datasets.keys())
+        st.divider()
+        st.markdown("### 📁 파일 배정")
+        main_key = st.selectbox("📅 이번 주 파일", keys,
+                                 index=keys.index(main_key) if main_key in keys else len(keys)-1)
+        prev_key = st.selectbox("📅 지난 주 파일", keys,
+                                 index=keys.index(prev_key) if prev_key in keys else 0)
 
-st.success(f"✅ {len(uploaded_files)}개 파일 로드 완료: {', '.join([f.name for f in uploaded_files])}")
-
-# 분석 대상 선택 (파일이 여러 개일 경우)
-if len(datasets) == 1:
-    main_key = list(datasets.keys())[0]
-    main_data = datasets[main_key]
-    compare_data = None
-else:
-    keys = list(datasets.keys())
-    col1, col2 = st.columns(2)
-    with col1:
-        main_key = st.selectbox("📅 이번 주 파일", keys, index=len(keys)-1)
-    with col2:
-        prev_key = st.selectbox("📅 지난 주 파일", keys, index=0)
-    main_data = datasets[main_key]
-    compare_data = datasets[prev_key]
+main_data = datasets[main_key]
+compare_data = datasets[prev_key] if prev_key and prev_key in datasets else None
 
 tabs = st.tabs(["📈 주간 요약", "🏪 약국별 분석", "🎯 디자인물 분석", "💡 자동 인사이트"])
 
