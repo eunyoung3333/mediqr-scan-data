@@ -400,67 +400,107 @@ st.divider()
 
 # 사이드바
 with st.sidebar:
-    st.markdown("### 📂 파일 업로드")
-    st.markdown("매주 새로운 엑셀 파일을 업로드하세요")
+    st.markdown('### 📂 파일 업로드')
+    st.markdown('이전 주차(A) + 현재 주차(B) 파일을 업로드하세요')
 
     uploaded_files = st.file_uploader(
-        "엑셀 파일 (최대 2개)",
+        '엑셀 파일 2개 업로드',
         type=['xlsx'],
         accept_multiple_files=True,
-        help="이전 주 + 현재 주 파일을 함께 올리거나, 1개만 올려도 됩니다"
+        key='uploaded_files',
+        help='A파일(이전 누적) + B파일(최신 누적)'
     )
 
-    st.divider()
-    st.markdown("### ⚙️ 설정")
-    show_raw = st.toggle("📋 원시 데이터 보기", value=False)
+    # 파일 2개 올라오면 드롭존 숨김
+    if uploaded_files and len(uploaded_files) >= 2:
+        st.markdown('<style>[data-testid="stFileUploaderDropzone"]{display:none!important}</style>', unsafe_allow_html=True)
 
     st.divider()
-    st.markdown("""
-    <div style="font-size:0.8rem; color:#94A3B8; line-height:1.6">
-    <b>지원 시트</b><br>
-    • RAW_GA 변환 (핵심)<br>
-    • 제작물 리스트<br>
-    • 요약 시트<br>
-    • 환급 데이터
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('### ⚙️ 설정')
+    show_raw = st.toggle('📋 원시 데이터 보기', value=False)
+
+    st.divider()
+    st.markdown('<div style="font-size:0.8rem;color:#94A3B8;line-height:1.6"><b>지원 시트</b><br>• RAW_GA 변환 (핵심)<br>• ★약국 요약 시트<br>• 제작물 리스트</div>', unsafe_allow_html=True)
 
 
 if not uploaded_files:
-    st.markdown("""
-    <div class="upload-hint">
-        <div style="font-size:2rem; margin-bottom:8px">📊</div>
-        <div style="font-weight:600; font-size:1rem; margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일을 업로드하세요</div>
-        <div>1개 파일: 최신 주차 분석 | 2개 파일: 주차 간 비교 분석</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="upload-hint"><div style="font-size:2rem;margin-bottom:8px">📊</div><div style="font-weight:600;font-size:1rem;margin-bottom:4px">왼쪽 사이드바에서 엑셀 파일 2개를 업로드하세요</div><div>A파일(이전 누적) + B파일(이번 주 누적)</div></div>', unsafe_allow_html=True)
     st.stop()
 
+# 파일 선택 UI
+keys_list = [f.name for f in uploaded_files]
+if len(uploaded_files) == 1:
+    main_key = keys_list[0]
+    prev_key = None
+else:
+    col1, col2 = st.columns(2)
+    with col1:
+        main_key = st.selectbox('📅 B파일 (최신 누적)', keys_list, index=len(keys_list)-1)
+    with col2:
+        prev_options = [k for k in keys_list if k != main_key]
+        prev_key = st.selectbox('📅 A파일 (이전 누적)', prev_options, index=0) if prev_options else None
+
+# 분석 시작 버튼 (파일 2개 필요)
+if len(uploaded_files) < 2:
+    st.info('📂 파일을 2개 모두 업로드하면 분석 시작하기 버튼이 활성화됩니다.')
+
+btn_col, _ = st.columns([1, 2])
+with btn_col:
+    btn_disabled = len(uploaded_files) < 2
+    if st.button('🔍 분석 시작하기', type='primary', disabled=btn_disabled, use_container_width=True):
+        st.session_state['run_analysis'] = True
+
+if not st.session_state.get('run_analysis'):
+    st.stop()
+
+# TT 스타일 로딩 오버레이
+st.markdown("""
+<div id="tt-loader">
+  <div class="pct" id="tt-pct">0%</div>
+  <div class="label">데이터 분석 중</div>
+  <div class="bar-wrap"><div class="bar-fill" id="tt-bar"></div></div>
+</div>
+<script>
+(function(){
+  var el=document.getElementById('tt-pct');
+  var bar=document.getElementById('tt-bar');
+  var loader=document.getElementById('tt-loader');
+  var n=0, idx=0;
+  var steps=[];
+  for(var i=0;i<55;i++) steps.push(1);
+  for(var i=0;i<30;i++) steps.push(2);
+  for(var i=0;i<5;i++)  steps.push(1);
+  steps.push(5);
+  var iv=setInterval(function(){
+    if(idx>=steps.length||n>=100){
+      n=100; el.textContent='100%'; bar.style.width='100%';
+      clearInterval(iv);
+      setTimeout(function(){
+        loader.style.transition='opacity 0.7s ease';
+        loader.style.opacity='0';
+        setTimeout(function(){loader.style.display='none';},750);
+      },400);
+      return;
+    }
+    n=Math.min(100,n+steps[idx++]);
+    el.textContent=n+'%';
+    bar.style.width=n+'%';
+  },28);
+})();
+</script>
+""", unsafe_allow_html=True)
+
+import time; time.sleep(0.15)
 
 # 데이터 파싱
 datasets = {}
 for f in uploaded_files:
-    parsed = parse_excel(f)
-    datasets[f.name] = parsed
+    datasets[f.name] = parse_excel(f)
 
-st.success(f"✅ {len(uploaded_files)}개 파일 로드 완료: {', '.join([f.name for f in uploaded_files])}")
+main_data = datasets[main_key]
+compare_data = datasets[prev_key] if prev_key and prev_key in datasets else None
 
-# 분석 대상 선택 (파일이 여러 개일 경우)
-if len(datasets) == 1:
-    main_key = list(datasets.keys())[0]
-    main_data = datasets[main_key]
-    compare_data = None
-else:
-    keys = list(datasets.keys())
-    col1, col2 = st.columns(2)
-    with col1:
-        main_key = st.selectbox("📅 현재 주차 파일", keys, index=len(keys)-1)
-    with col2:
-        prev_key = st.selectbox("📅 이전 주차 파일", keys, index=0)
-    main_data = datasets[main_key]
-    compare_data = datasets[prev_key]
-
-tabs = st.tabs(["📈 주간 요약", "🏪 약국별 분석", "🎯 디자인물 분석", "💡 자동 인사이트"])
+tabs = st.tabs(['📈 주간 요약', '🏪 약국별 분석', '🎯 디자인물 분석', '💡 자동 인사이트'])
 
 
 # ── 탭 1: 주간 요약 ──────────────────────────────────────────────────────────
