@@ -589,8 +589,18 @@ if st.session_state.get('do_parse'):
 
     # 파싱 실행 (스피너가 화면에 표시된 상태에서)
     datasets_new = {}
+    parse_error = False
     for f in uploaded_files:
-        datasets_new[f.name] = parse_excel(f)
+        try:
+            datasets_new[f.name] = parse_excel(f)
+        except ValueError as e:
+            spinner_slot.empty()
+            st.error(f"**{f.name}** 파일 오류:\n\n{e}")
+            parse_error = True
+            break
+    if parse_error:
+        st.session_state['do_parse'] = False
+        st.stop()
     st.session_state['datasets'] = datasets_new
     keys_list = list(datasets_new.keys())
     st.session_state['main_key'] = keys_list[-1]
