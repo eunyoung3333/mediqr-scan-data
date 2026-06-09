@@ -218,11 +218,9 @@ st.markdown("""
 
 # ── 데이터 파싱 함수 ──────────────────────────────────────────────────────────
 
-# 실제로 사용하는 시트만 읽음 (속도 최적화)
-NEEDED_SHEETS = [
-    'RAW_GA데이터',
-    '★약국 - 환급자 수, 메디QR 진입, 바코드 수',
-]
+# GA 시트는 구버전/신버전 이름 모두 허용
+GA_SHEET_CANDIDATES = ['RAW_GA데이터', 'RAW_GA 변환']
+SUMMARY_SHEET = '★약국 - 환급자 수, 메디QR 진입, 바코드 수'
 
 @st.cache_data(show_spinner=False)
 def parse_excel(file) -> dict:
@@ -232,20 +230,25 @@ def parse_excel(file) -> dict:
     available = wb.sheetnames
     wb.close()
 
-    missing = [s for s in NEEDED_SHEETS if s not in available]
-    if missing:
+    ga_sheet = next((s for s in GA_SHEET_CANDIDATES if s in available), None)
+    if ga_sheet is None:
         raise ValueError(
-            f"엑셀 파일에 필요한 시트가 없습니다: {', '.join(missing)}\n"
+            f"엑셀 파일에 GA 데이터 시트가 없습니다.\n"
+            f"필요한 시트: '{GA_SHEET_CANDIDATES[0]}' 또는 '{GA_SHEET_CANDIDATES[1]}'\n"
             f"현재 시트 목록: {', '.join(available)}"
         )
 
+    sheets_to_read = [ga_sheet]
+    if SUMMARY_SHEET in available:
+        sheets_to_read.append(SUMMARY_SHEET)
+
     file.seek(0)
-    xl = pd.read_excel(file, sheet_name=NEEDED_SHEETS, engine='openpyxl')
+    xl = pd.read_excel(file, sheet_name=sheets_to_read, engine='openpyxl')
     result = {}
 
-    # 1) RAW_GA데이터: 약국별 일별 유입/스캔 데이터
-    if 'RAW_GA데이터' in xl:
-        df = xl['RAW_GA데이터'].copy()
+    # 1) GA 데이터: 약국별 일별 유입/스캔 데이터
+    if ga_sheet in xl:
+        df = xl[ga_sheet].copy()
         # 첫 행을 컬럼명으로 — 중복/NaN 방지
         new_cols = [str(v).strip() if pd.notna(v) else f'_col_{i}' for i, v in enumerate(df.iloc[0])]
         df.columns = new_cols
@@ -271,9 +274,8 @@ def parse_excel(file) -> dict:
         result['ga'] = df
 
     # 4) ★약국 요약 시트 — 누적 주차별 집계 파싱
-    sheet_key = '★약국 - 환급자 수, 메디QR 진입, 바코드 수'
-    if sheet_key in xl:
-        s = xl[sheet_key].copy()
+    if SUMMARY_SHEET in xl:
+        s = xl[SUMMARY_SHEET].copy()
         rows = []
         for i in range(6, min(6+10, len(s))):
             label = str(s.iloc[i, 1]).strip()
