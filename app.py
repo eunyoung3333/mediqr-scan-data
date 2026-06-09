@@ -220,24 +220,32 @@ st.markdown("""
 
 # 실제로 사용하는 시트만 읽음 (속도 최적화)
 NEEDED_SHEETS = [
-    'RAW_GA 변환',
+    'RAW_GA데이터',
     '★약국 - 환급자 수, 메디QR 진입, 바코드 수',
 ]
 
 @st.cache_data(show_spinner=False)
 def parse_excel(file) -> dict:
     """엑셀 파일 → 정제된 데이터프레임 딕셔너리 반환 (필요 시트만 로드)"""
-    # 시트 이름 먼저 확인 (전체 읽기 없이)
     import openpyxl
-    wb_names = openpyxl.open(file, read_only=True, data_only=True).sheetnames if False else None
+    wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
+    available = wb.sheetnames
+    wb.close()
 
-    # 필요한 시트만 선택적으로 읽기
+    missing = [s for s in NEEDED_SHEETS if s not in available]
+    if missing:
+        raise ValueError(
+            f"엑셀 파일에 필요한 시트가 없습니다: {', '.join(missing)}\n"
+            f"현재 시트 목록: {', '.join(available)}"
+        )
+
+    file.seek(0)
     xl = pd.read_excel(file, sheet_name=NEEDED_SHEETS, engine='openpyxl')
     result = {}
 
-    # 1) RAW_GA 변환: 약국별 일별 유입/스캔 데이터
-    if 'RAW_GA 변환' in xl:
-        df = xl['RAW_GA 변환'].copy()
+    # 1) RAW_GA데이터: 약국별 일별 유입/스캔 데이터
+    if 'RAW_GA데이터' in xl:
+        df = xl['RAW_GA데이터'].copy()
         # 첫 행을 컬럼명으로 — 중복/NaN 방지
         new_cols = [str(v).strip() if pd.notna(v) else f'_col_{i}' for i, v in enumerate(df.iloc[0])]
         df.columns = new_cols
@@ -528,7 +536,7 @@ with st.sidebar:
     st.markdown("""
     <div style="font-size:0.8rem; color:#94A3B8; line-height:1.6">
     <b>지원 시트</b><br>
-    • RAW_GA 변환 (핵심)<br>
+    • RAW_GA데이터 (핵심)<br>
     • 제작물 리스트<br>
     • 요약 시트<br>
     • 환급 데이터
@@ -834,7 +842,7 @@ with tabs[3]:
     st.markdown('<div class="section-header">💡 자동 인사이트</div>', unsafe_allow_html=True)
 
     if 'ga' not in main_data:
-        st.warning("RAW_GA 변환 시트가 없어 분석이 불가합니다.")
+        st.warning("RAW_GA데이터 시트가 없어 분석이 불가합니다.")
     else:
         compare_df_for_insight = compare_data['ga'] if compare_data and 'ga' in compare_data else None
         insights = generate_insights(main_data['ga'], compare_df_for_insight)
