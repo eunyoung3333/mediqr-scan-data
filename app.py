@@ -610,9 +610,9 @@ if st.session_state.get('do_parse'):
     for f in uploaded_files:
         try:
             datasets_new[f.name] = parse_excel(f)
-        except ValueError as e:
+        except Exception as e:
             spinner_slot.empty()
-            st.error(f"**{f.name}** 파일 오류:\n\n{e}")
+            st.error(f"**{f.name}** 파일 오류 ({type(e).__name__}):\n\n{e}")
             parse_error = True
             break
     if parse_error:
