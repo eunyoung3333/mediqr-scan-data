@@ -218,9 +218,20 @@ st.markdown("""
 
 # ── 데이터 파싱 함수 ──────────────────────────────────────────────────────────
 
-# GA 시트는 구버전/신버전 이름 모두 허용
-GA_SHEET_CANDIDATES = ['RAW_GA데이터', 'RAW_GA 변환']
+# GA 시트 후보 (우선순위 순)
+GA_SHEET_CANDIDATES = ['RAW_GA데이터', 'RAW_GA 변환', 'RAW_최종']
+GA_KEY_COLS = {'약국', '유입 일자', '총 사용자 수', '바코드 이벤트 횟수'}
 SUMMARY_SHEET = '★약국 - 환급자 수, 메디QR 진입, 바코드 수'
+
+def _find_ga_sheet(available):
+    for name in GA_SHEET_CANDIDATES:
+        if name in available:
+            return name
+    # 날짜가 포함된 제미나이분석용 시트 (예: 메디QR 데이터_260528_제미나이분석용)
+    for name in available:
+        if '제미나이분석용' in name:
+            return name
+    return None
 
 @st.cache_data(show_spinner=False)
 def parse_excel(file) -> dict:
@@ -230,11 +241,11 @@ def parse_excel(file) -> dict:
     available = wb.sheetnames
     wb.close()
 
-    ga_sheet = next((s for s in GA_SHEET_CANDIDATES if s in available), None)
+    ga_sheet = _find_ga_sheet(available)
     if ga_sheet is None:
         raise ValueError(
             f"엑셀 파일에 GA 데이터 시트가 없습니다.\n"
-            f"필요한 시트: '{GA_SHEET_CANDIDATES[0]}' 또는 '{GA_SHEET_CANDIDATES[1]}'\n"
+            f"지원 시트: {', '.join(GA_SHEET_CANDIDATES)} 또는 '*제미나이분석용'\n"
             f"현재 시트 목록: {', '.join(available)}"
         )
 
@@ -249,10 +260,16 @@ def parse_excel(file) -> dict:
     # 1) GA 데이터: 약국별 일별 유입/스캔 데이터
     if ga_sheet in xl:
         df = xl[ga_sheet].copy()
-        # 첫 행을 컬럼명으로 — 중복/NaN 방지
-        new_cols = [str(v).strip() if pd.notna(v) else f'_col_{i}' for i, v in enumerate(df.iloc[0])]
-        df.columns = new_cols
-        df = df.iloc[1:].reset_index(drop=True)
+        # 헤더 위치 자동 감지: pandas가 이미 올바른 컬럼명을 읽었으면 그대로 사용
+        current_cols = {str(c).strip() for c in df.columns if pd.notna(c)}
+        if GA_KEY_COLS.issubset(current_cols):
+            # 헤더가 1행에 있는 경우 (예: RAW_최종)
+            df.columns = [str(c).strip() if pd.notna(c) else f'_col_{i}' for i, c in enumerate(df.columns)]
+        else:
+            # 헤더가 2행에 있는 경우 (예: RAW_GA데이터, 제미나이분석용)
+            new_cols = [str(v).strip() if pd.notna(v) else f'_col_{i}' for i, v in enumerate(df.iloc[0])]
+            df.columns = new_cols
+            df = df.iloc[1:].reset_index(drop=True)
         # 중복 컬럼 제거 (첫 번째만 유지)
         df = df.loc[:, ~df.columns.duplicated()]
         # 필요한 컬럼만 추출
